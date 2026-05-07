@@ -1,0 +1,151 @@
+name: Offboard Repo
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  offboard:
+    if: |
+      github.event.label.name == 'approved' &&
+      contains(github.event.issue.labels.*.name, 'offboarding')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Parse issue body
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+
+            const extract = (label) => {
+              const re = new RegExp(`### ${label}\\s*\\n+([^\\n#]+)`);
+              const m = body.match(re);
+              return m ? m[1].trim() : '';
+            };
+
+            const repo       = extract('Target repository \\(org/repo\\)');
+            const projectKey = extract('SonarCloud project key');
+
+            if (!repo || !projectKey) {
+              core.setFailed('Could not parse required fields from issue body.');
+              return;
+            }
+
+            const [repoOwner, repoName] = repo.split('/');
+            if (!repoOwner || !repoName) {
+              core.setFailed(`Invalid repo format: "${repo}". Expected "org/repo".`);
+              return;
+            }
+
+            core.setOutput('repo',        repo);
+            core.setOutput('repo_owner',  repoOwner);
+            core.setOutput('repo_name',   repoName);
+            core.setOutput('project_key', projectKey);
+
+      - name: Post "in progress" comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: '⏳ Offboarding **${{ steps.parse.outputs.repo }}** — running now…'
+            });
+
+      - name: Checkout (for PR scripts)
+        uses: actions/checkout@v4
+
+      - name: Revoke scoped SonarCloud token
+        id: revoke_token
+        env:
+          SONAR_ADMIN_TOKEN: ${{ secrets.SONAR_ADMIN_TOKEN }}
+          SONAR_HOST_URL:    ${{ vars.SONAR_HOST_URL }}
+          PROJECT_KEY:       ${{ steps.parse.outputs.project_key }}
+          REPO_NAME:         ${{ steps.parse.outputs.repo_name }}
+        run: |
+          TOKEN_NAME="sonar-fix-${REPO_NAME}"
+
+          # List tokens for the project and find ours (name prefix match)
+          TOKENS=$(curl -sf \
+            "${SONAR_HOST_URL}/api/project_analysis_tokens/search?project=${PROJECT_KEY}" \
+            -H "Authorization: Bearer ${SONAR_ADMIN_TOKEN}")
+
+          MATCH=$(echo "$TOKENS" | jq -r \
+            --arg prefix "sonar-fix-${REPO_NAME}-" \
+            '.userTokens[] | select(.name | startswith($prefix)) | .name')
+
+          if [ -z "$MATCH" ]; then
+            echo "No sonar-fix token found for ${PROJECT_KEY} — may have already been revoked."
+          else
+            for NAME in $MATCH; do
+              curl -sf -X POST \
+                "${SONAR_HOST_URL}/api/project_analysis_tokens/revoke" \
+                -H "Authorization: Bearer ${SONAR_ADMIN_TOKEN}" \
+                --data-urlencode "projectKey=${PROJECT_KEY}" \
+                --data-urlencode "name=${NAME}"
+              echo "Revoked token: ${NAME}"
+            done
+          fi
+
+      - name: Remove secrets and variables from target repo
+        env:
+          GH_TOKEN:    ${{ secrets.ONBOARDING_PAT }}
+          TARGET_REPO: ${{ steps.parse.outputs.repo }}
+        run: |
+          gh secret delete SONAR_TOKEN      --repo "$TARGET_REPO" || true
+          gh variable delete SONAR_PROJECT_KEY --repo "$TARGET_REPO" || true
+          gh variable delete SONAR_HOST_URL    --repo "$TARGET_REPO" || true
+
+      - name: Open offboarding PR in target repo
+        env:
+          GH_TOKEN:        ${{ secrets.ONBOARDING_PAT }}
+          TARGET_REPO:     ${{ steps.parse.outputs.repo }}
+          REPO_OWNER:      ${{ steps.parse.outputs.repo_owner }}
+          REPO_NAME:       ${{ steps.parse.outputs.repo_name }}
+          ISSUE_NUMBER:    ${{ github.event.issue.number }}
+          ONBOARDING_REPO: ${{ github.repository }}
+        run: |
+          bash scripts/open-offboarding-pr.sh
+
+      - name: Post success comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '✅ **Offboarding complete for `${{ steps.parse.outputs.repo }}`**\n',
+                '- SonarCloud project analysis token revoked',
+                '- `SONAR_TOKEN`, `SONAR_PROJECT_KEY`, and `SONAR_HOST_URL` removed from repo',
+                '- PR opened in target repo to remove sonar-fix workflow and config',
+                '',
+                'Merge the PR to fully deactivate sonar-fix.'
+              ].join('\n')
+            });
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['offboarded']
+            });
+
+      - name: Post failure comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: '❌ Offboarding failed for `${{ steps.parse.outputs.repo }}`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+            });

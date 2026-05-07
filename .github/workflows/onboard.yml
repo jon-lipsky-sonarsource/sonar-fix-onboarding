@@ -1,0 +1,177 @@
+name: Onboard Repo
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  onboard:
+    if: |
+      github.event.label.name == 'approved' &&
+      contains(github.event.issue.labels.*.name, 'onboarding')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Parse issue body
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+
+            const extract = (label) => {
+              const re = new RegExp(`### ${label}\\s*\\n+([^\\n#]+)`);
+              const m = body.match(re);
+              return m ? m[1].trim() : '';
+            };
+
+            const repo           = extract('Target repository \\(org/repo\\)');
+            const projectKey     = extract('SonarCloud project key');
+            const agent          = extract('AI agent');
+            const trigger        = extract('Workflow trigger');
+            const configOverrides = (() => {
+              const re = /### Config overrides \(optional\)\s*\n+([\s\S]*?)(?=\n###|$)/;
+              const m = body.match(re);
+              const raw = m ? m[1].trim() : '';
+              return (raw === '_No response_' || raw === '') ? '' : raw;
+            })();
+
+            if (!repo || !projectKey || !agent || !trigger) {
+              core.setFailed('Could not parse required fields from issue body.');
+              return;
+            }
+
+            const [repoOwner, repoName] = repo.split('/');
+            if (!repoOwner || !repoName) {
+              core.setFailed(`Invalid repo format: "${repo}". Expected "org/repo".`);
+              return;
+            }
+
+            core.setOutput('repo',             repo);
+            core.setOutput('repo_owner',       repoOwner);
+            core.setOutput('repo_name',        repoName);
+            core.setOutput('project_key',      projectKey);
+            core.setOutput('agent',            agent);
+            core.setOutput('trigger',          trigger);
+            core.setOutput('config_overrides', configOverrides);
+
+      - name: Post "in progress" comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: '⏳ Onboarding **${{ steps.parse.outputs.repo }}** — running now…'
+            });
+
+      - name: Checkout (for workflow templates)
+        uses: actions/checkout@v4
+
+      - name: Generate scoped SonarCloud token
+        id: sonar_token
+        env:
+          SONAR_ADMIN_TOKEN: ${{ secrets.SONAR_ADMIN_TOKEN }}
+          SONAR_HOST_URL:    ${{ vars.SONAR_HOST_URL }}
+          PROJECT_KEY:       ${{ steps.parse.outputs.project_key }}
+          REPO_NAME:         ${{ steps.parse.outputs.repo_name }}
+        run: |
+          TOKEN_NAME="sonar-fix-${{ steps.parse.outputs.repo_name }}-$(date +%Y%m%d)"
+
+          RESPONSE=$(curl -sf -X POST \
+            "${SONAR_HOST_URL}/api/project_analysis_tokens/generate" \
+            -H "Authorization: Bearer ${SONAR_ADMIN_TOKEN}" \
+            --data-urlencode "projectKey=${PROJECT_KEY}" \
+            --data-urlencode "name=${TOKEN_NAME}" \
+            --data-urlencode "type=PROJECT_ANALYSIS_TOKEN")
+
+          SCOPED_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+
+          if [ -z "$SCOPED_TOKEN" ] || [ "$SCOPED_TOKEN" = "null" ]; then
+            echo "Failed to generate SonarCloud token. Response: $RESPONSE"
+            exit 1
+          fi
+
+          echo "token_name=${TOKEN_NAME}" >> "$GITHUB_OUTPUT"
+          # Write token to a temp file to avoid it appearing in logs
+          echo "$SCOPED_TOKEN" > /tmp/sonar_token.txt
+          echo "token_generated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set secrets and variables in target repo
+        env:
+          GH_TOKEN:        ${{ secrets.ONBOARDING_PAT }}
+          TARGET_REPO:     ${{ steps.parse.outputs.repo }}
+          PROJECT_KEY:     ${{ steps.parse.outputs.project_key }}
+          SONAR_HOST_URL:  ${{ vars.SONAR_HOST_URL }}
+        run: |
+          gh secret set SONAR_TOKEN \
+            --repo "$TARGET_REPO" \
+            --body "$(cat /tmp/sonar_token.txt)"
+
+          gh variable set SONAR_PROJECT_KEY \
+            --repo "$TARGET_REPO" \
+            --body "$PROJECT_KEY"
+
+          gh variable set SONAR_HOST_URL \
+            --repo "$TARGET_REPO" \
+            --body "$SONAR_HOST_URL"
+
+          # Clean up token from disk
+          rm /tmp/sonar_token.txt
+
+      - name: Open onboarding PR in target repo
+        env:
+          GH_TOKEN:         ${{ secrets.ONBOARDING_PAT }}
+          TARGET_REPO:      ${{ steps.parse.outputs.repo }}
+          REPO_OWNER:       ${{ steps.parse.outputs.repo_owner }}
+          REPO_NAME:        ${{ steps.parse.outputs.repo_name }}
+          AGENT:            ${{ steps.parse.outputs.agent }}
+          TRIGGER:          ${{ steps.parse.outputs.trigger }}
+          CONFIG_OVERRIDES: ${{ steps.parse.outputs.config_overrides }}
+          PROJECT_KEY:      ${{ steps.parse.outputs.project_key }}
+          ISSUE_NUMBER:     ${{ github.event.issue.number }}
+          ONBOARDING_REPO:  ${{ github.repository }}
+          TOKEN_NAME:       ${{ steps.sonar_token.outputs.token_name }}
+        run: |
+          bash scripts/open-onboarding-pr.sh
+
+      - name: Post success comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '✅ **Onboarding complete for `${{ steps.parse.outputs.repo }}`**\n',
+                '- Scoped SonarCloud token generated and stored as `SONAR_TOKEN`',
+                '- `SONAR_PROJECT_KEY` and `SONAR_HOST_URL` variables set',
+                '- PR opened in target repo with sonar-fix workflow and config',
+                '',
+                'Merge the PR to activate automated fixing.'
+              ].join('\n')
+            });
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['onboarded']
+            });
+
+      - name: Post failure comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: '❌ Onboarding failed for `${{ steps.parse.outputs.repo }}`. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+            });

@@ -1,0 +1,84 @@
+name: "Onboard Repo to sonar-fix"
+description: "Request to onboard a repository to automated SonarQube AI fixing."
+title: "onboard: <org/repo>"
+labels:
+  - onboarding
+  - pending-approval
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## sonar-fix Onboarding Request
+
+        Once submitted, an admin will review and approve by adding the `approved` label.
+        The onboarding workflow will then automatically:
+        - Generate a scoped SonarCloud project analysis token for your repo
+        - Set it as `SONAR_TOKEN` in your repo's Actions secrets
+        - Set required repo variables
+        - Open a PR in your repo with the sonar-fix caller workflow and config
+
+  - type: input
+    id: repo
+    attributes:
+      label: "Target repository (org/repo)"
+      description: "The repository to onboard. Must be in the same GitHub organization."
+      placeholder: "my-org/my-service"
+    validations:
+      required: true
+
+  - type: input
+    id: sonar_project_key
+    attributes:
+      label: "SonarCloud project key"
+      description: "Found in SonarCloud → Project → Project Information."
+      placeholder: "my-org_my-service"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: "AI agent"
+      description: "Which AI agent should fix the issues?"
+      options:
+        - claude
+        - codex
+        - copilot
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: trigger
+    attributes:
+      label: "Workflow trigger"
+      description: "`comment-triggered` (recommended — waits for SonarCloud analysis) or `pr-triggered` (fires on every push)."
+      options:
+        - comment-triggered
+        - pr-triggered
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: config_overrides
+    attributes:
+      label: "Config overrides (optional)"
+      description: "Any overrides to apply on top of the central default config. YAML format."
+      placeholder: |
+        auto_fix:
+          severities: [BLOCKER, CRITICAL]
+        guardrails:
+          max_issues_per_run: 10
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: "Acknowledgements"
+      options:
+        - label: "I have confirmed this repo has SonarCloud configured and PR decoration enabled."
+          required: true
+        - label: "I understand the AI agent will open commits directly on my PR branch."
+          required: true

@@ -1,0 +1,41 @@
+name: "Offboard Repo from sonar-fix"
+description: "Request to remove a repository from automated SonarQube AI fixing."
+title: "offboard: <org/repo>"
+labels:
+  - offboarding
+  - pending-approval
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## sonar-fix Offboarding Request
+
+        Once submitted, an admin will review and approve by adding the `approved` label.
+        The offboarding workflow will then automatically:
+        - Revoke the scoped SonarCloud project analysis token
+        - Remove `SONAR_TOKEN` and related variables from your repo
+        - Open a PR in your repo removing the sonar-fix caller workflow and config
+
+  - type: input
+    id: repo
+    attributes:
+      label: "Target repository (org/repo)"
+      placeholder: "my-org/my-service"
+    validations:
+      required: true
+
+  - type: input
+    id: sonar_project_key
+    attributes:
+      label: "SonarCloud project key"
+      placeholder: "my-org_my-service"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: "Reason for offboarding (optional)"
+      placeholder: "Repo is being deprecated / switching to a different agent / etc."
+    validations:
+      required: false
