@@ -139,9 +139,12 @@ jobs:
           SCOPED_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
 
           if [ -z "$SCOPED_TOKEN" ] || [ "$SCOPED_TOKEN" = "null" ]; then
-            echo "Failed to generate SonarCloud token. Response: $RESPONSE"
+            echo "Failed to generate SonarCloud token."
             exit 1
           fi
+
+          # Mask the token in all subsequent log output
+          echo "::add-mask::$SCOPED_TOKEN"
 
           echo "token_name=${TOKEN_NAME}" >> "$GITHUB_OUTPUT"
           echo "$SCOPED_TOKEN" > /tmp/sonar_token.txt
@@ -155,7 +158,7 @@ jobs:
         run: |
           gh secret set SONAR_TOKEN \
             --repo "$TARGET_REPO" \
-            --body "$(cat /tmp/sonar_token.txt)"
+            --body "@/tmp/sonar_token.txt"
 
           gh variable set SONAR_PROJECT_KEY \
             --repo "$TARGET_REPO" \
