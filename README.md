@@ -93,9 +93,19 @@ REPO="YOUR-ORG/sonar-fix-onboarding"
 gh secret set SONAR_ADMIN_TOKEN --repo "$REPO"   # paste the SonarCloud token from Step 3
 gh secret set ONBOARDING_PAT    --repo "$REPO"   # paste the GitHub PAT from Step 4
 
-# Required variable
-gh variable set SONAR_HOST_URL --repo "$REPO" --body "https://sonarcloud.io"
-# For SonarQube Server: --body "https://your-sonarqube.example.com"
+# Required variables
+gh variable set SONAR_HOST_URL     --repo "$REPO" --body "https://sonarcloud.io"
+# For SonarQube Server:            --body "https://your-sonarqube.example.com"
+
+gh variable set SONAR_ORGANIZATION --repo "$REPO" --body "your-sonarcloud-org-slug"
+# The SonarCloud organization key (visible in SonarCloud → Organization → Settings)
+
+gh variable set GITHUB_ALM_SETTING --repo "$REPO" --body "GitHub"
+# The name of the GitHub ALM integration configured in SonarCloud
+# (SonarCloud → Organization → Settings → DevOps Platform Integrations → name field)
+
+gh variable set SONAR_FIX_AGENT    --repo "$REPO" --body "claude"
+# Which AI agent to use for all onboarded repos: claude | codex | copilot
 ```
 
 ### Step 6 — Set AI agent secrets at the org level
