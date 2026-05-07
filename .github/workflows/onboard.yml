@@ -173,7 +173,7 @@ jobs:
           TARGET_REPO:       ${{ steps.parse.outputs.repo }}
           REPO_OWNER:        ${{ steps.parse.outputs.repo_owner }}
           REPO_NAME:         ${{ steps.parse.outputs.repo_name }}
-          AGENT:             ${{ vars.SONAR_FIX_AGENT }}
+          AGENT:             ${{ vars.SONAR_FIX_AGENT || 'copilot' }}
           TRIGGER:           ${{ steps.parse.outputs.trigger }}
           CONFIG_OVERRIDES:  ${{ steps.parse.outputs.config_overrides }}
           PROJECT_KEY:       ${{ steps.sonar_project.outputs.project_key }}

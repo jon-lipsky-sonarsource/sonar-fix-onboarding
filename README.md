@@ -106,6 +106,7 @@ gh variable set GITHUB_ALM_SETTING --repo "$REPO" --body "GitHub"
 
 gh variable set SONAR_FIX_AGENT    --repo "$REPO" --body "claude"
 # Which AI agent to use for all onboarded repos: claude | codex | copilot
+# Optional — defaults to "copilot" if not set
 ```
 
 ### Step 6 — Set AI agent secrets at the org level
